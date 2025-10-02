@@ -7,25 +7,27 @@ export default function ChessReviewBot() {
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedGame, setSelectedGame] = useState(null);
-  const [chess, setChess] = useState(new Chess());
   const [fen, setFen] = useState('start');
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
+  const [moveHistory, setMoveHistory] = useState([]);
 
   // Fetch latest month archive games
   const fetchGames = async () => {
-    if (!username) return alert('Enter a username');
+    if (!username.trim()) return alert('Please enter a username');
 
     try {
       setLoading(true);
       setGames([]);
       setSelectedGame(null);
 
-      // Step 1: Get archives
-      const archivesRes = await fetch(`https://api.chess.com/pub/player/${username}/games/archives`);
-      if (!archivesRes.ok) throw new Error('Could not fetch archives');
+      const archivesRes = await fetch(`https://api.chess.com/pub/player/${username.trim()}/games/archives`);
+      if (!archivesRes.ok) throw new Error('User not found');
       const archivesData = await archivesRes.json();
 
-      // Step 2: Get latest archive games
+      if (!archivesData.archives || archivesData.archives.length === 0) {
+        throw new Error('No games found for this user');
+      }
+
       const latestArchive = archivesData.archives[archivesData.archives.length - 1];
       const gamesRes = await fetch(latestArchive);
       if (!gamesRes.ok) throw new Error('Could not fetch games');
@@ -34,7 +36,7 @@ export default function ChessReviewBot() {
       setGames(gamesData.games || []);
     } catch (err) {
       console.error(err);
-      alert('Failed to fetch games. Make sure the username exists.');
+      alert(err.message || 'Failed to fetch games. Please check the username.');
     } finally {
       setLoading(false);
     }
@@ -43,49 +45,54 @@ export default function ChessReviewBot() {
   // Load a game into the board
   const loadGame = (g) => {
     try {
-      if (!g.pgn) return alert('This game has no PGN available.');
+      if (!g.pgn) {
+        alert('This game has no PGN available.');
+        return;
+      }
 
-      const newChess = new Chess();
-      const loaded = newChess.loadPgn(g.pgn);
-      
-      if (!loaded) return alert('Failed to parse PGN for this game.');
+      const chess = new Chess();
 
-      setChess(newChess);
-      setFen(newChess.fen());
+      // Correct usage for chess.js v1.x
+      const ok = chess.load_pgn(g.pgn, { sloppy: true });
+      if (!ok) {
+        alert('Failed to parse this game.');
+        return;
+      }
+
+      const history = chess.history();
+      chess.reset();
+
+      setSelectedGame(chess);
+      setMoveHistory(history);
+      setFen(chess.fen());
       setCurrentMoveIndex(0);
-      setSelectedGame(newChess);
     } catch (err) {
       console.error(err);
-      alert('Failed to load this game.');
+      alert('Error loading game: ' + err.message);
     }
   };
 
+  const goToMove = (moveIndex) => {
+    if (!selectedGame || moveIndex < 0 || moveIndex > moveHistory.length) return;
+
+    selectedGame.reset();
+    for (let i = 0; i < moveIndex; i++) {
+      selectedGame.move(moveHistory[i]);
+    }
+    setFen(selectedGame.fen());
+    setCurrentMoveIndex(moveIndex);
+  };
 
   const nextMove = () => {
-    if (!selectedGame) return;
-    const history = selectedGame.history();
-    if (currentMoveIndex < history.length) {
-      selectedGame.reset();
-      for (let i = 0; i <= currentMoveIndex; i++) {
-        selectedGame.move(history[i]);
-      }
-      setFen(selectedGame.fen());
-      setCurrentMoveIndex(currentMoveIndex + 1);
-    }
+    if (currentMoveIndex < moveHistory.length) goToMove(currentMoveIndex + 1);
   };
 
   const prevMove = () => {
-    if (!selectedGame) return;
-    const history = selectedGame.history();
-    if (currentMoveIndex > 0) {
-      selectedGame.reset();
-      for (let i = 0; i < currentMoveIndex - 1; i++) {
-        selectedGame.move(history[i]);
-      }
-      setFen(selectedGame.fen());
-      setCurrentMoveIndex(currentMoveIndex - 1);
-    }
+    if (currentMoveIndex > 0) goToMove(currentMoveIndex - 1);
   };
+
+  const resetBoard = () => goToMove(0);
+  const goToEnd = () => goToMove(moveHistory.length);
 
   return (
     <div style={{ padding: '2rem' }}>
@@ -96,51 +103,68 @@ export default function ChessReviewBot() {
           placeholder="Enter Chess.com username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
+          onKeyPress={(e) => e.key === 'Enter' && fetchGames()}
           style={{ padding: '0.5rem', width: '250px', marginRight: '0.5rem' }}
         />
-        <button onClick={fetchGames} style={{ padding: '0.5rem 1rem' }}>
+        <button onClick={fetchGames} disabled={loading} style={{ padding: '0.5rem 1rem' }}>
           {loading ? 'Loading...' : 'Fetch Games'}
         </button>
       </div>
 
-      <div>
-        <h2>Latest Games:</h2>
-        {games.length === 0 ? (
-          <p>No games fetched yet.</p>
-        ) : (
-          <ul>
-            {games.map((g, idx) => (
-              <li
-                key={idx}
-                style={{
-                  cursor: 'pointer',
-                  margin: '0.25rem 0',
-                  textDecoration: 'underline',
-                  color: 'blue',
-                }}
-                onClick={() => loadGame(g)}
-              >
-                {g.white.username} vs {g.black.username} —{' '}
-                {new Date(g.end_time * 1000).toLocaleString()}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {selectedGame && (
-        <div style={{ marginTop: '2rem' }}>
-          <h2>Game Board</h2>
-          <Chessboard position={fen} width={400} />
-          <div style={{ marginTop: '1rem' }}>
-            <button onClick={prevMove} style={{ marginRight: '0.5rem' }}>
-              Prev
-            </button>
-            <button onClick={nextMove}>Next</button>
-            <span style={{ marginLeft: '1rem' }}>Move {currentMoveIndex}</span>
-          </div>
+      <div style={{ display: 'flex', gap: '2rem' }}>
+        {/* Games list */}
+        <div style={{ flex: 1 }}>
+          <h2>Recent Games</h2>
+          {games.length === 0 ? (
+            <p>No games loaded yet. Enter a username to get started.</p>
+          ) : (
+            <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+              {games.map((g, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => loadGame(g)}
+                  style={{
+                    padding: '0.5rem',
+                    border: '1px solid #ccc',
+                    marginBottom: '0.25rem',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div>{g.white.username} vs {g.black.username}</div>
+                  <div style={{ fontSize: '0.8rem', color: '#555' }}>
+                    {new Date(g.end_time * 1000).toLocaleString()} • {g.time_class} • {g.rules}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Chessboard */}
+        <div style={{ flex: 1 }}>
+          {selectedGame ? (
+            <>
+              <h2>Game Board</h2>
+              <Chessboard position={fen} width={400} />
+              <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button onClick={resetBoard}>⏮ Start</button>
+                <button onClick={prevMove} disabled={currentMoveIndex === 0}>◀ Prev</button>
+                <button onClick={nextMove} disabled={currentMoveIndex === moveHistory.length}>Next ▶</button>
+                <button onClick={goToEnd}>End ⏭</button>
+              </div>
+              <div style={{ marginTop: '0.5rem' }}>
+                Move {currentMoveIndex} of {moveHistory.length}
+                {currentMoveIndex > 0 && (
+                  <div>Last move: {moveHistory[currentMoveIndex - 1]}</div>
+                )}
+              </div>
+            </>
+          ) : (
+            <p>Select a game to begin reviewing</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
