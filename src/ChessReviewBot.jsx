@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import Chessboard from 'chessboardjsx';
+import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
 
 export default function ChessReviewBot() {
@@ -11,7 +11,7 @@ export default function ChessReviewBot() {
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
   const [moveHistory, setMoveHistory] = useState([]);
 
-  // Fetch latest month archive games
+  // Fetch latest archive games
   const fetchGames = async () => {
     if (!username.trim()) return alert('Please enter a username');
 
@@ -36,35 +36,27 @@ export default function ChessReviewBot() {
       setGames(gamesData.games || []);
     } catch (err) {
       console.error(err);
-      alert(err.message || 'Failed to fetch games. Please check the username.');
+      alert(err.message || 'Failed to fetch games.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Load a game into the board
+  // Load a game
   const loadGame = (g) => {
     try {
-      if (!g.pgn) {
-        alert('This game has no PGN available.');
-        return;
-      }
+      if (!g.pgn) return alert('This game has no PGN available.');
 
       const chess = new Chess();
-
-      // Correct usage for chess.js v1.x
-      const ok = chess.load_pgn(g.pgn, { sloppy: true });
-      if (!ok) {
-        alert('Failed to parse this game.');
-        return;
-      }
+      const ok = chess.load_pgn(g.pgn);
+      if (!ok) return alert('Failed to parse this game.');
 
       const history = chess.history();
       chess.reset();
 
       setSelectedGame(chess);
       setMoveHistory(history);
-      setFen(chess.fen());
+      setFen(chess.fen() || 'start');
       setCurrentMoveIndex(0);
     } catch (err) {
       console.error(err);
@@ -75,22 +67,21 @@ export default function ChessReviewBot() {
   const goToMove = (moveIndex) => {
     if (!selectedGame || moveIndex < 0 || moveIndex > moveHistory.length) return;
 
-    selectedGame.reset();
-    for (let i = 0; i < moveIndex; i++) {
-      selectedGame.move(moveHistory[i]);
+    try {
+      selectedGame.reset();
+      for (let i = 0; i < moveIndex; i++) {
+        selectedGame.move(moveHistory[i]);
+      }
+      setFen(selectedGame.fen() || 'start');
+      setCurrentMoveIndex(moveIndex);
+    } catch (err) {
+      console.error(err);
+      alert('Error navigating moves.');
     }
-    setFen(selectedGame.fen());
-    setCurrentMoveIndex(moveIndex);
   };
 
-  const nextMove = () => {
-    if (currentMoveIndex < moveHistory.length) goToMove(currentMoveIndex + 1);
-  };
-
-  const prevMove = () => {
-    if (currentMoveIndex > 0) goToMove(currentMoveIndex - 1);
-  };
-
+  const nextMove = () => goToMove(currentMoveIndex + 1);
+  const prevMove = () => goToMove(currentMoveIndex - 1);
   const resetBoard = () => goToMove(0);
   const goToEnd = () => goToMove(moveHistory.length);
 
@@ -111,12 +102,12 @@ export default function ChessReviewBot() {
         </button>
       </div>
 
-      <div style={{ display: 'flex', gap: '2rem' }}>
-        {/* Games list */}
-        <div style={{ flex: 1 }}>
+      <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+        {/* Game list */}
+        <div style={{ flex: 1, minWidth: '300px' }}>
           <h2>Recent Games</h2>
           {games.length === 0 ? (
-            <p>No games loaded yet. Enter a username to get started.</p>
+            <p>No games loaded yet.</p>
           ) : (
             <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
               {games.map((g, idx) => (
@@ -142,22 +133,24 @@ export default function ChessReviewBot() {
         </div>
 
         {/* Chessboard */}
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: '400px' }}>
           {selectedGame ? (
             <>
               <h2>Game Board</h2>
-              <Chessboard position={fen} width={400} />
-              <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <div style={{ width: '400px', margin: '0 auto' }}>
+                <Chessboard position={fen || 'start'} boardWidth={400} />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
                 <button onClick={resetBoard}>⏮ Start</button>
                 <button onClick={prevMove} disabled={currentMoveIndex === 0}>◀ Prev</button>
                 <button onClick={nextMove} disabled={currentMoveIndex === moveHistory.length}>Next ▶</button>
                 <button onClick={goToEnd}>End ⏭</button>
               </div>
+
               <div style={{ marginTop: '0.5rem' }}>
                 Move {currentMoveIndex} of {moveHistory.length}
-                {currentMoveIndex > 0 && (
-                  <div>Last move: {moveHistory[currentMoveIndex - 1]}</div>
-                )}
+                {currentMoveIndex > 0 && <div>Last move: {moveHistory[currentMoveIndex - 1]}</div>}
               </div>
             </>
           ) : (
